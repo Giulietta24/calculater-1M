@@ -38,9 +38,6 @@ st.sidebar.subheader("🚨 Risk Management Rule")
 risk_per_trade = st.sidebar.slider("Max Account Risk Per Trade (%)", min_value=0.5, max_value=20.0, value=5.0, step=0.5)
 
 
-# Then pass that dynamic variable straight into your data fetching functions:
-daily_hist = yf.Ticker(ticker).history(period=lookback_choice)
-
 # --- PERSISTENT DATA LOADERS ---
 def load_month_data():
     if os.path.exists(MONTH_DATA_FILE):
@@ -278,10 +275,3 @@ with tab4:
                 st.warning(f"🚨 Note: You are currently displaying {open_count} 'Open' positions/holdings in your filter settings. Open positions do not inject raw PnL math into the milestone charts until you log their closing entries.")
     else:
         st.info("Your trade ledger is empty. Use the input form above to log your first trade or asset allocation setup!")
-# Add this right below your table in Tab 4 to download a copy anytime
-st.download_button(
-    label="📥 Export Journal to Desktop CSV",
-    data=df_journal.to_csv(index=False),
-    file_name="my_options_journal_backup.csv",
-    mime="text/csv"
-)
