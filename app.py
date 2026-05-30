@@ -13,13 +13,13 @@ st.write("This model accommodates high-yield premium strategies, tracking the ex
 
 st.divider()
 
-# --- FILE PATHS FOR PERSISTENT TRACKING ---
+# --- FILE PATHS FOR PERSISTENT STORAGE ---
 MONTH_DATA_FILE = "pnl_data.csv"
 WEEK_DATA_FILE = "weekly_pnl_data.csv"
-TRACKER_MONTHS = 36  # Fixed 3-year horizon
+JOURNAL_DATA_FILE = "trade_journal.csv"
+TRACKER_MONTHS = 36 
 
 # --- GENERATE CALENDAR MONTH NAMES DYNAMICALLY ---
-# Start from the current month/year and look forward 36 months
 start_date = datetime.now()
 CALENDAR_MONTHS = [(start_date + relativedelta(months=i)).strftime("%B %Y") for i in range(TRACKER_MONTHS)]
 
@@ -29,92 +29,71 @@ starting_capital = st.sidebar.number_input("Starting Capital ($)", min_value=0.0
 target_goal = st.sidebar.number_input("Ultimate Goal Target ($)", min_value=0.0, value=1000000.0, step=50000.0)
 
 st.sidebar.subheader("📈 Trading Strategy")
-monthly_yield = st.sidebar.slider("Target Monthly Return (%)", min_value=1.0, max_value=20.0, value=20.0, step=0.5,
-                                  help="Warning: Higher monthly percentages dramatically increase assignment and tail risk.")
+monthly_yield = st.sidebar.slider("Target Monthly Return (%)", min_value=1.0, max_value=20.0, value=20.0, step=0.5)
 
 st.sidebar.subheader("💵 Capital Infusion")
-monthly_deposit = st.sidebar.number_input("Monthly Contribution from Income ($)", min_value=0.0, value=0.0, step=100.0,
-                                         help="Fresh cash added to the portfolio each month.")
+monthly_deposit = st.sidebar.number_input("Monthly Contribution from Income ($)", min_value=0.0, value=0.0, step=100.0)
 
 st.sidebar.subheader("🚨 Risk Management Rule")
-risk_per_trade = st.sidebar.slider("Max Account Risk Per Trade (%)", min_value=0.5, max_value=20.0, value=5.0, step=0.5,
-                                   help="The % of your total account value risked on any single option setup.")
+risk_per_trade = st.sidebar.slider("Max Account Risk Per Trade (%)", min_value=0.5, max_value=20.0, value=5.0, step=0.5)
 
 
-# --- PERSISTENT TRACKER DATA LOADERS ---
+# --- PERSISTENT DATA LOADERS ---
 def load_month_data():
     if os.path.exists(MONTH_DATA_FILE):
         df = pd.read_csv(MONTH_DATA_FILE)
-        # Verify alignment with current calendar frame
         if len(df) == TRACKER_MONTHS and df["Month"].iloc[0] == CALENDAR_MONTHS[0]:
             return df
-    return pd.DataFrame({
-        "Month": CALENDAR_MONTHS,
-        "Actual PnL ($)": [0.0] * TRACKER_MONTHS
-    })
+    return pd.DataFrame({"Month": CALENDAR_MONTHS, "Actual PnL ($)": [0.0] * TRACKER_MONTHS})
 
 def load_week_data():
     if os.path.exists(WEEK_DATA_FILE):
         df = pd.read_csv(WEEK_DATA_FILE)
         if df["Month"].iloc[0] == CALENDAR_MONTHS[0]:
             return df
-    
-    # Initialize empty weekly matrix using calendar months
-    months_col = []
-    weeks_col = []
+    months_col, weeks_col = [], []
     for m_name in CALENDAR_MONTHS:
         for w in range(1, 5):
             months_col.append(m_name)
             weeks_col.append(f"Week {w}")
-            
-    return pd.DataFrame({
-        "Month": months_col,
-        "Week": weeks_col,
-        "Actual PnL ($)": [0.0] * (TRACKER_MONTHS * 4)
-    })
+    return pd.DataFrame({"Month": months_col, "Week": weeks_col, "Actual PnL ($)": [0.0] * (TRACKER_MONTHS * 4)})
+
+def load_journal_data():
+    if os.path.exists(JOURNAL_DATA_FILE):
+        df = pd.read_csv(JOURNAL_DATA_FILE)
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+        return df
+    # Added "Status" column to handle active inventory
+    return pd.DataFrame(columns=["Date", "Month Ref", "Week Ref", "Ticker", "Strategy Type", "Status", "Trade PnL ($)", "Notes"])
 
 df_actual_months = load_month_data()
 df_actual_weeks = load_week_data()
+df_journal = load_journal_data()
 
 
-# --- ENGINE 1: MAIN TRAJECTORY SIMULATION (Theoretical Timeline) ---
+# --- MATH ENGINE 1: SIMULATION CORE ---
 current_balance = starting_capital
 months_counter = 0
 simulation_data = []
 
-if monthly_yield == 0 and monthly_deposit == 0:
-    st.error("You must have either a monthly return or a monthly deposit to grow the account!")
-else:
-    while current_balance < target_goal and months_counter < 240:
-        trading_profit = current_balance * (monthly_yield / 100)
-        max_dollar_risk_per_trade = current_balance * (risk_per_trade / 100)
-        
-        simulation_data.append({
-            "Month Index": months_counter,
-            "Portfolio Value ($)": current_balance,
-            "Monthly Profit ($)": trading_profit,
-            "Weekly Profit Target ($)": trading_profit / 4.33,
-            "Max Risk Per Trade ($)": max_dollar_risk_per_trade
-        })
-        current_balance += trading_profit + monthly_deposit
-        months_counter += 1
-
+while current_balance < target_goal and months_counter < 240:
+    trading_profit = current_balance * (monthly_yield / 100)
     simulation_data.append({
         "Month Index": months_counter,
         "Portfolio Value ($)": current_balance,
-        "Monthly Profit ($)": current_balance * (monthly_yield / 100),
-        "Weekly Profit Target ($)": (current_balance * (monthly_yield / 100)) / 4.33,
+        "Monthly Profit ($)": trading_profit,
+        "Weekly Profit Target ($)": trading_profit / 4.33,
         "Max Risk Per Trade ($)": current_balance * (risk_per_trade / 100)
     })
+    current_balance += trading_profit + monthly_deposit
+    months_counter += 1
 
 df_sim = pd.DataFrame(simulation_data)
 
 
-# --- ENGINE 2: TRACKER MATRIX CALCULATIONS ---
-tracker_balances = []
-tracker_pnls = []
+# --- MATH ENGINE 2: TRACKER CONNECTIONS ---
+tracker_balances, tracker_pnls = [], []
 tracker_balance_runner = starting_capital
-
 for m in range(TRACKER_MONTHS):
     pnl_target = tracker_balance_runner * (monthly_yield / 100)
     tracker_pnls.append(round(pnl_target, 2))
@@ -130,132 +109,169 @@ df_tracker = pd.DataFrame({
 df_tracker["Variance ($)"] = df_tracker["Actual PnL ($)"] - df_tracker["Target PnL ($)"]
 
 
-# --- CREATE TABS INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["📊 Main Projection Dashboard", "📅 3-Year Monthly Milestones", "⏱️ Weekly Journal"])
+# --- TABS LAYOUT ---
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Main Projection Dashboard", 
+    "📅 3-Year Monthly Milestones", 
+    "⏱️ Weekly Aggregates", 
+    "📓 Comprehensive Trade Journal"
+])
 
 
 # ==========================================
-# TAB 1: PROJECTION DASHBOARD
+# TAB 1: DASHBOARD
 # ==========================================
 with tab1:
-    st.subheader("🏁 Performance Timeline")
-    
+    st.subheader("🏁 Live Performance vs Projection")
     total_actual_pnl = df_tracker["Actual PnL ($)"].sum()
     current_portfolio_value = starting_capital + total_actual_pnl
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Theoretical Time to Goal", f"{months_counter} Months", f"{(months_counter/12):.1f} Years")
-    col2.metric("Live Portfolio Balance", f"${current_portfolio_value:,.2f}", 
-                delta=f"${total_actual_pnl:,.2f} Total Net PnL" if total_actual_pnl != 0 else None)
+    col1.metric("Theoretical Time to Goal", f"{months_counter} Months")
+    col2.metric("Live Portfolio Balance", f"${current_portfolio_value:,.2f}", delta=f"${total_actual_pnl:,.2f} Net PnL")
     col3.metric("Target Monthly Yield", f"{monthly_yield}%")
     col4.metric("Starting Base Risk Size", f"${starting_capital * (risk_per_trade / 100):,.2f}")
     
     st.divider()
-    
-    st.subheader("📉 Capital Scaling Trajectory")
-    fig = px.area(
-        df_sim, x="Month Index", y="Portfolio Value ($)", 
-        title=f"Compounding Theoretical Profile at {monthly_yield}% Per Month",
-        labels={"Portfolio Value ($)": "Account Balance ($)", "Month Index": "Months Passed"}
-    )
-    fig.add_hline(y=target_goal, line_dash="dash", line_color="green", annotation_text="Target Goal Mark")
+    fig = px.area(df_sim, x="Month Index", y="Portfolio Value ($)", title="Compounding Target Matrix")
+    fig.add_hline(y=target_goal, line_dash="dash", line_color="green")
     st.plotly_chart(fig, use_container_width=True)
-    
-    st.divider()
-    
-    st.subheader("📋 Theoretical Position Scaling Guide")
-    df_display = df_sim.copy()
-    df_display["Portfolio Value ($)"] = df_display["Portfolio Value ($)"].map("${:,.2f}".format)
-    df_display["Monthly Profit ($)"] = df_display["Monthly Profit ($)"].map("${:,.2f}".format)
-    df_display["Weekly Profit Target ($)"] = df_display["Weekly Profit Target ($)"].map("${:,.2f}".format)
-    df_display["Max Risk Per Trade ($)"] = df_display["Max Risk Per Trade ($)"].map("${:,.2f}".format)
-    st.dataframe(df_display.set_index("Month Index"), use_container_width=True)
 
 
 # ==========================================
-# TAB 2: MONTHLY MILIESTONES
+# TAB 2: MONTHLY MILESTONES
 # ==========================================
 with tab2:
-    st.header("📅 36-Month Goal Execution Journal")
-    st.write("💡 *Note: Your Actual PnL values are automatically updated when you log your weekly earnings in the next tab!*")
-    
-    # Format dataframe for presentation
+    st.header("📅 36-Month Milestone Ledger")
     df_tracker_display = df_tracker.copy()
-    df_tracker_display["Target PnL ($)"] = df_tracker_display["Target PnL ($)"].map("${:,.2f}".format)
-    df_tracker_display["Actual PnL ($)"] = df_tracker_display["Actual PnL ($)"].map("${:,.2f}".format)
-    df_tracker_display["Variance ($)"] = df_tracker_display["Variance ($)"].map("${:,.2f}".format)
-    df_tracker_display["Target Balance ($)"] = df_tracker_display["Target Balance ($)"].map("${:,.2f}".format)
-
-    st.dataframe(
-        df_tracker_display,
-        hide_index=True,
-        use_container_width=True
-    )
-        
-    st.divider()
-    
-    st.subheader("📊 Tracker Execution Path (Actuals vs Target)")
-    df_tracker_chart = df_tracker.copy()
-    df_tracker_chart["Actual Balance ($)"] = starting_capital + df_tracker_chart["Actual PnL ($)"].cumsum()
-    
-    active_entries = df_tracker_chart[df_tracker_chart["Actual PnL ($)"] != 0].index
-    if len(active_entries) > 0:
-        last_idx = active_entries[-1]
-        df_tracker_chart.loc[last_idx + 1:, "Actual Balance ($)"] = np.nan
-    else:
-        df_tracker_chart["Actual Balance ($)"] = np.nan
-        
-    st.line_chart(df_tracker_chart.set_index("Month")[["Target Balance ($)", "Actual Balance ($)"]])
+    for col in ["Target PnL ($)", "Actual PnL ($)", "Variance ($)", "Target Balance ($)"]:
+        df_tracker_display[col] = df_tracker_display[col].map("${:,.2f}".format)
+    st.dataframe(df_tracker_display, hide_index=True, use_container_width=True)
 
 
 # ==========================================
-# TAB 3: WEEKLY JOURNAL
+# TAB 3: WEEKLY AGGREGATES
 # ==========================================
 with tab3:
-    st.header("⏱️ Weekly Tracking Engine")
-    st.write("Focus completely on the current micro-cycle. Select the calendar month you are working on, enter your weekly results, and save.")
+    st.header("⏱️ Weekly Milestone Performance")
+    selected_month = st.selectbox("View Weeklies For:", CALENDAR_MONTHS)
     
-    # Dropdown selector displaying actual calendar months
-    selected_month = st.selectbox("Select Target Month to Edit:", CALENDAR_MONTHS)
-    
-    # Calculate this month's proportional target per week
-    target_row = df_tracker[df_tracker["Month"] == selected_month].iloc[0]
-    weekly_target = round(target_row["Target PnL ($)"] / 4, 2)
-    
-    st.info(f"🎯 **Target Strategy for {selected_month}:** You need to average **${weekly_target:,.2f} / week** to smash this milestone.")
-    
-    # Filter weekly data frame
     df_filtered_weeks = df_actual_weeks[df_actual_weeks["Month"] == selected_month].copy()
-    df_filtered_weeks["Target PnL ($)"] = weekly_target
-    df_filtered_weeks["Variance ($)"] = df_filtered_weeks["Actual PnL ($)"] - weekly_target
+    m_target = df_tracker[df_tracker["Month"] == selected_month].iloc[0]["Target PnL ($)"]
+    df_filtered_weeks["Target PnL ($)"] = round(m_target / 4, 2)
+    df_filtered_weeks["Variance ($)"] = df_filtered_weeks["Actual PnL ($)"] - df_filtered_weeks["Target PnL ($)"]
     
-    # Show interactive weekly data editor
-    edited_weeks_df = st.data_editor(
-        df_filtered_weeks[["Week", "Target PnL ($)", "Actual PnL ($)", "Variance ($)"]],
-        disabled=["Week", "Target PnL ($)", "Variance ($)"],
-        hide_index=True,
-        use_container_width=True
-    )
+    st.dataframe(df_filtered_weeks, hide_index=True, use_container_width=True)
+
+
+# ==========================================
+# TAB 4: UPGRADED TRADE JOURNAL (ALL STRATEGIES)
+# ==========================================
+with tab4:
+    st.header("📓 Multi-Asset Trading Ledger")
     
-    if st.button("💾 Save Weekly Progress"):
-        for index, row in edited_weeks_df.iterrows():
-            week_label = row["Week"]
-            actual_val = float(row["Actual PnL ($)"])
+    # Form layout for inputting raw values
+    with st.form("trade_entry_form", clear_on_submit=True):
+        st.subheader("🖋️ Log New Trade Setup / Asset Allocation")
+        c1, c2, c3 = st.columns(3)
+        t_date = c1.date_input("Trade Execution Date", value=datetime.now().date())
+        t_month = c2.selectbox("Assign to Calculation Month:", CALENDAR_MONTHS)
+        t_week = c3.selectbox("Assign to Week:", ["Week 1", "Week 2", "Week 3", "Week 4"])
+        
+        c4, c5, c6, c7 = st.columns(4)
+        t_ticker = c4.text_input("Ticker Symbol (e.g. SPY, NVDA, TSLA)", value="SPY").upper()
+        
+        # Expanded strategy types to track everything requested
+        t_strategy = c5.selectbox("Asset / Strategy Class:", [
+            "Cash Secured Put (CSP)", 
+            "Covered Call / Wheel",
+            "Credit Spread (Put/Call)", 
+            "Long Call Buy",
+            "Long Put Buy",
+            "Naked Premium / Condor",
+            "Shares / Stocks Held",
+            "LEAPS / Long-Term Options",
+            "Futures / Crypto Scalp"
+        ])
+        
+        # Status dropdown to isolate closed performance from currently held inventory
+        t_status = c6.selectbox("Trade Status:", ["Closed (Realized PnL)", "Open (Current Holding)"])
+        t_pnl = c7.number_input("Realized PnL ($ Amount - Leave 0 if Open)", value=0.00, step=10.0)
+        
+        t_notes = st.text_input("Position Notes (Entry delta, cost basis, expiration, adjustments)", placeholder="Sold 30 delta CSP, covered calls running at...")
+        submit_btn = st.form_submit_button("⚡ Commit Entry to Database")
+        
+        if submit_btn:
+            new_trade = pd.DataFrame([{
+                "Date": t_date, "Month Ref": t_month, "Week Ref": t_week,
+                "Ticker": t_ticker, "Strategy Type": t_strategy, "Status": t_status, "Trade PnL ($)": t_pnl, "Notes": t_notes
+            }])
+            df_journal = pd.concat([df_journal, new_trade], ignore_index=True)
+            df_journal.to_csv(JOURNAL_DATA_FILE, index=False)
             
-            match_idx = df_actual_weeks[(df_actual_weeks["Month"] == selected_month) & (df_actual_weeks["Week"] == week_label)].index
-            df_actual_weeks.loc[match_idx, "Actual PnL ($)"] = actual_val
+            # --- AUTO RUN ROLLUP CASCADE ENGINE ---
+            # Calculates weekly / monthly targets using CLOSED trades only so unrealized holdings don't throw off milestones
+            df_closed_only = df_journal[df_journal["Status"] == "Closed (Realized PnL)"]
             
-        # Save weekly master file
-        df_actual_weeks[["Month", "Week", "Actual PnL ($)"]].to_csv(WEEK_DATA_FILE, index=False)
+            # 1. Clear out old weekly state & reload from fresh closed data
+            df_actual_weeks["Actual PnL ($)"] = 0.0
+            if not df_closed_only.empty:
+                week_rollups = df_closed_only.groupby(["Month Ref", "Week Ref"])["Trade PnL ($)"].sum().reset_index()
+                for _, row in week_rollups.iterrows():
+                    m_ref, w_ref, pnl_sum = row["Month Ref"], row["Week Ref"], row["Trade PnL ($)"]
+                    w_idx = df_actual_weeks[(df_actual_weeks["Month"] == m_ref) & (df_actual_weeks["Week"] == w_ref)].index
+                    df_actual_weeks.loc[w_idx, "Actual PnL ($)"] = pnl_sum
+            df_actual_weeks.to_csv(WEEK_DATA_FILE, index=False)
+            
+            # 2. Recalculate monthly totals from the updated weekly totals
+            month_rollups = df_actual_weeks.groupby("Month")["Actual PnL ($)"].sum().reset_index()
+            df_final_months = pd.DataFrame({"Month": CALENDAR_MONTHS}).merge(month_rollups, on="Month", how="left").fillna(0.0)
+            df_final_months.to_csv(MONTH_DATA_FILE, index=False)
+            
+            st.success("Entry processed! Multi-tab cascading metrics updated completely.")
+            st.rerun()
+
+    st.divider()
+    
+    # --- STRATEGY METRICS & HISTORICAL FILTERS ---
+    st.subheader("🔍 Filter & Analyze Portfolio Ledger")
+    
+    if not df_journal.empty:
+        col_f1, col_f2 = st.columns([1, 3])
         
-        # Aggregate to monthly master file
-        rollup_df = df_actual_weeks.groupby("Month")["Actual PnL ($)"].sum().reset_index()
+        with col_f1:
+            # Dynamic filter widgets containing all requested asset classes
+            filter_status = st.multiselect("Filter by Status:", df_journal["Status"].unique(), default=df_journal["Status"].unique())
+            filter_strat = st.multiselect("Filter by Strategy / Asset Class:", df_journal["Strategy Type"].unique(), default=df_journal["Strategy Type"].unique())
+            filter_tick = st.multiselect("Filter by Ticker Symbol:", df_journal["Ticker"].unique(), default=df_journal["Ticker"].unique())
         
-        # Build clean mapping back to order framework
-        df_final_months = pd.DataFrame({"Month": CALENDAR_MONTHS})
-        df_final_months = df_final_months.merge(rollup_df, on="Month", how="left").fillna(0.0)
+        # Apply filter settings
+        df_filtered_journal = df_journal[
+            (df_journal["Status"].isin(filter_status)) &
+            (df_journal["Strategy Type"].isin(filter_strat)) & 
+            (df_journal["Ticker"].isin(filter_tick))
+        ]
         
-        df_final_months[["Month", "Actual PnL ($)"]].to_csv(MONTH_DATA_FILE, index=False)
-        
-        st.success(f"Weekly journal saved! rolled up total into {selected_month} dashboard profile.")
-        st.rerun()
+        with col_f2:
+            st.write("📋 **Matching Positions Ledger:**")
+            st.dataframe(df_filtered_journal.sort_values(by="Date", ascending=False), hide_index=True, use_container_width=True)
+            
+            # Performance Metric Blocks broken down by Strategy
+            st.write("📈 **Performance Breakdown by Parameters:**")
+            
+            # Filter performance tracking using only realized items to ensure math accuracy
+            df_stats_base = df_filtered_journal[df_filtered_journal["Status"] == "Closed (Realized PnL)"]
+            
+            if not df_stats_base.empty:
+                stats_df = df_stats_base.groupby("Strategy Type")["Trade PnL ($)"].agg(["sum", "count", "mean"]).reset_index()
+                stats_df.columns = ["Strategy Type", "Total Realized PnL ($)", "Trades Executed & Closed", "Average PnL / Setup ($)"]
+                st.dataframe(stats_df, hide_index=True, use_container_width=True)
+            else:
+                st.info("No realized/closed performance metrics available for the currently selected filters.")
+                
+            # Quick check block for open exposure
+            open_count = len(df_filtered_journal[df_filtered_journal["Status"] == "Open (Current Holding)"])
+            if open_count > 0:
+                st.warning(f"🚨 Note: You are currently displaying {open_count} 'Open' positions/holdings in your filter settings. Open positions do not inject raw PnL math into the milestone charts until you log their closing entries.")
+    else:
+        st.info("Your trade ledger is empty. Use the input form above to log your first trade or asset allocation setup!")
