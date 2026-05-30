@@ -36,12 +36,7 @@ monthly_deposit = st.sidebar.number_input("Monthly Contribution from Income ($)"
 
 st.sidebar.subheader("🚨 Risk Management Rule")
 risk_per_trade = st.sidebar.slider("Max Account Risk Per Trade (%)", min_value=0.5, max_value=20.0, value=5.0, step=0.5)
-# Add this control directly to your sidebar workspace
-lookback_choice = st.sidebar.selectbox(
-    "Alpha/Beta Baseline Window", 
-    options=["3mo", "6mo", "1y"], 
-    index=1  # Default choice points to 6 months
-)
+
 
 # Then pass that dynamic variable straight into your data fetching functions:
 daily_hist = yf.Ticker(ticker).history(period=lookback_choice)
