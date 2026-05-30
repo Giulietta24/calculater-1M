@@ -275,3 +275,10 @@ with tab4:
                 st.warning(f"🚨 Note: You are currently displaying {open_count} 'Open' positions/holdings in your filter settings. Open positions do not inject raw PnL math into the milestone charts until you log their closing entries.")
     else:
         st.info("Your trade ledger is empty. Use the input form above to log your first trade or asset allocation setup!")
+# Add this right below your table in Tab 4 to download a copy anytime
+st.download_button(
+    label="📥 Export Journal to Desktop CSV",
+    data=df_journal.to_csv(index=False),
+    file_name="my_options_journal_backup.csv",
+    mime="text/csv"
+)
